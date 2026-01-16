@@ -3,6 +3,7 @@ import Sidebar from "../layout/Sidebar";
 import Topbar from "../layout/Topbar";
 import KPICard from "../components/KPICard";
 import Charts from "../components/Charts";
+import MultiSelect from "../components/MultiSelect";
 
 interface RecordItem {
   date: string;
@@ -33,17 +34,29 @@ const calculateGrowth = (current: number, previous: number) => {
   return ((current - previous) / previous) * 100;
 };
 
+/* ================= WEEK AGGREGATION ================= */
+const getWeekKey = (dateStr: string) => {
+  const d = new Date(dateStr);
+  const firstDay = new Date(d.getFullYear(), 0, 1);
+  const dayOfYear =
+    (d.getTime() - firstDay.getTime()) / 86400000 + 1;
+  const week = Math.ceil(dayOfYear / 7);
+  return `${d.getFullYear()}-W${week.toString().padStart(2, "0")}`;
+};
+
 export default function Comparison() {
   /* ================= LOAD DATA ================= */
   const [records] = useState<RecordItem[]>(() => {
+    if (typeof window === "undefined") return [];
     const raw = localStorage.getItem(STORAGE_KEY);
     return raw ? JSON.parse(raw) : [];
   });
 
-  /* ================= FILTERS ================= */
-  const [source, setSource] = useState("ALL");
-  const [location, setLocation] = useState("ALL");
+  /* ================= MULTI-SELECT FILTERS ================= */
+  const [selectedSources, setSelectedSources] = useState<string[]>([]);
+  const [selectedLocations, setSelectedLocations] = useState<string[]>([]);
 
+  /* ================= DATE RANGES ================= */
   const [fromA, setFromA] = useState("");
   const [toA, setToA] = useState("");
   const [fromB, setFromB] = useState("");
@@ -78,46 +91,64 @@ export default function Comparison() {
     }
   };
 
-  /* ================= FILTERED DATA (COMPILER SAFE) ================= */
+  /* ================= FILTERED DATA ================= */
   const dataA = useMemo(() => {
     return records.filter((r) => {
-      if (source !== "ALL" && r.source !== source) return false;
-      if (location !== "ALL" && r.location !== location) return false;
+      if (
+        selectedSources.length > 0 &&
+        !selectedSources.includes(r.source)
+      )
+        return false;
+      if (
+        selectedLocations.length > 0 &&
+        !selectedLocations.includes(r.location)
+      )
+        return false;
+
       const d = new Date(r.date);
       if (fromA && d < new Date(fromA)) return false;
       if (toA && d > new Date(toA)) return false;
       return true;
     });
-  }, [records, source, location, fromA, toA]);
+  }, [records, selectedSources, selectedLocations, fromA, toA]);
 
   const dataB = useMemo(() => {
     return records.filter((r) => {
-      if (source !== "ALL" && r.source !== source) return false;
-      if (location !== "ALL" && r.location !== location) return false;
+      if (
+        selectedSources.length > 0 &&
+        !selectedSources.includes(r.source)
+      )
+        return false;
+      if (
+        selectedLocations.length > 0 &&
+        !selectedLocations.includes(r.location)
+      )
+        return false;
+
       const d = new Date(r.date);
       if (fromB && d < new Date(fromB)) return false;
       if (toB && d > new Date(toB)) return false;
       return true;
     });
-  }, [records, source, location, fromB, toB]);
+  }, [records, selectedSources, selectedLocations, fromB, toB]);
 
-  /* ================= SUMMARY ================= */
+  /* ================= SUMMARY (BEST / WORST FIXED) ================= */
   const summarize = (data: RecordItem[]) => {
-    const src: Record<string, number> = {};
-    const loc: Record<string, number> = {};
+    const sourceMap: Record<string, number> = {};
 
     data.forEach((r) => {
-      src[r.source] = (src[r.source] || 0) + 1;
-      loc[r.location] = (loc[r.location] || 0) + 1;
+      sourceMap[r.source] = (sourceMap[r.source] || 0) + 1;
     });
+
+    const sorted = Object.entries(sourceMap).sort(
+      (a, b) => b[1] - a[1]
+    );
 
     return {
       total: data.length,
-      sourceMap: src,
-      locationMap: loc,
-      topSource: Object.entries(src).sort((a, b) => b[1] - a[1])[0]?.[0] || "—",
-      topLocation:
-        Object.entries(loc).sort((a, b) => b[1] - a[1])[0]?.[0] || "—",
+      bestSource: sorted[0]?.[0] || "—",
+      worstSource: sorted[sorted.length - 1]?.[0] || "—",
+      sourceMap,
     };
   };
 
@@ -126,54 +157,22 @@ export default function Comparison() {
 
   const growth = calculateGrowth(summaryA.total, summaryB.total);
 
-  /* ================= SOURCE DELTA ================= */
-  const sourceDelta = useMemo(() => {
-    const allSources = new Set([
-      ...Object.keys(summaryA.sourceMap),
-      ...Object.keys(summaryB.sourceMap),
-    ]);
-
-    const deltas = Array.from(allSources).map((s) => ({
-      source: s,
-      delta:
-        (summaryA.sourceMap[s] || 0) - (summaryB.sourceMap[s] || 0),
-    }));
-
-    const best = deltas.sort((a, b) => b.delta - a.delta)[0];
-    const worst = deltas.sort((a, b) => a.delta - b.delta)[0];
-
-    return { best, worst };
-  }, [summaryA, summaryB]);
-
-  /* ================= CHART ================= */
-  const buildDailyChart = (data: RecordItem[]) => {
+  /* ================= WEEKLY CHART ================= */
+  const buildWeeklyChart = (data: RecordItem[]) => {
     const map: Record<string, number> = {};
     data.forEach((r) => {
-      map[r.date] = (map[r.date] || 0) + 1;
+      const key = getWeekKey(r.date);
+      map[key] = (map[key] || 0) + 1;
     });
-    return Object.entries(map).map(([date, value]) => ({ date, value }));
+    return Object.entries(map).map(([name, value]) => ({
+      date: name,
+      value,
+    }));
   };
 
-  /* ================= EXPORT ================= */
-  const exportCSV = () => {
-    const rows = [
-      ["Range", "Date", "Source", "Location"],
-      ...dataA.map((r) => ["A", r.date, r.source, r.location]),
-      ...dataB.map((r) => ["B", r.date, r.source, r.location]),
-    ];
-
-    const csv = rows.map((r) => r.join(",")).join("\n");
-    const blob = new Blob([csv], { type: "text/csv" });
-    const url = URL.createObjectURL(blob);
-
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "comparison.csv";
-    a.click();
-  };
-
-  const sources = ["ALL", ...new Set(records.map((r) => r.source))];
-  const locations = ["ALL", ...new Set(records.map((r) => r.location))];
+  /* ================= OPTIONS ================= */
+  const sourceOptions = [...new Set(records.map((r) => r.source))];
+  const locationOptions = [...new Set(records.map((r) => r.location))];
 
   return (
     <div className="app-layout">
@@ -183,22 +182,67 @@ export default function Comparison() {
 
         <h2>Comparison</h2>
 
+        {/* CONTEXT CARD */}
+        <div className="filters-card">
+          <strong>Context</strong>
+          <div>
+            Period A: {fromA || "—"} → {toA || "—"} | Period B:{" "}
+            {fromB || "—"} → {toB || "—"}
+          </div>
+          <div>
+            Sources:{" "}
+            {selectedSources.length > 0
+              ? selectedSources.join(", ")
+              : "All"}{" "}
+            | Locations:{" "}
+            {selectedLocations.length > 0
+              ? selectedLocations.join(", ")
+              : "All"}
+          </div>
+          <div>Timezone: IST (GMT +5:30)</div>
+        </div>
+
         {/* FILTERS */}
         <div className="filters-card">
-          <select value={source} onChange={(e) => setSource(e.target.value)}>
-            {sources.map((s) => <option key={s}>{s}</option>)}
-          </select>
-          <select value={location} onChange={(e) => setLocation(e.target.value)}>
-            {locations.map((l) => <option key={l}>{l}</option>)}
-          </select>
-          <button onClick={exportCSV}>Export CSV</button>
+          <MultiSelect
+            label="Sources"
+            options={sourceOptions}
+            selected={selectedSources}
+            onChange={setSelectedSources}
+          />
+          <MultiSelect
+            label="Locations"
+            options={locationOptions}
+            selected={selectedLocations}
+            onChange={setSelectedLocations}
+          />
         </div>
 
         {/* PRESETS */}
         <div className="filters-card">
-          <button onClick={() => applyPreset("MONTH")}>This Month vs Last Month</button>
-          <button onClick={() => applyPreset("QUARTER")}>This Quarter vs Last Quarter</button>
-          <button onClick={() => applyPreset("YEAR")}>This Year vs Last Year</button>
+          <button onClick={() => applyPreset("MONTH")}>
+            This Month vs Last Month
+          </button>
+          <button onClick={() => applyPreset("QUARTER")}>
+            This Quarter vs Last Quarter
+          </button>
+          <button onClick={() => applyPreset("YEAR")}>
+            This Year vs Last Year
+          </button>
+        </div>
+
+        {/* CUSTOM RANGE */}
+        <div className="filters-card">
+          <div>
+            <strong>Range A</strong>
+            <input type="date" value={fromA} onChange={(e) => setFromA(e.target.value)} />
+            <input type="date" value={toA} onChange={(e) => setToA(e.target.value)} />
+          </div>
+          <div>
+            <strong>Range B</strong>
+            <input type="date" value={fromB} onChange={(e) => setFromB(e.target.value)} />
+            <input type="date" value={toB} onChange={(e) => setToB(e.target.value)} />
+          </div>
         </div>
 
         {/* KPI */}
@@ -211,14 +255,14 @@ export default function Comparison() {
               {growth >= 0 ? "▲" : "▼"} {Math.abs(growth).toFixed(1)}%
             </h2>
           </div>
-          <KPICard title="Best Source" value={sourceDelta.best?.source || "—"} />
-          <KPICard title="Worst Source" value={sourceDelta.worst?.source || "—"} />
+          <KPICard title="Best Source" value={summaryA.bestSource} />
+          <KPICard title="Worst Source" value={summaryA.worstSource} />
         </div>
 
-        {/* CHARTS */}
+        {/* WEEKLY COMPARISON CHART */}
         <div className="secondary-grid">
-          <Charts type="LINE" data={buildDailyChart(dataA)} />
-          <Charts type="LINE" data={buildDailyChart(dataB)} />
+          <Charts type="LINE" data={buildWeeklyChart(dataA)} />
+          <Charts type="LINE" data={buildWeeklyChart(dataB)} />
         </div>
       </main>
     </div>

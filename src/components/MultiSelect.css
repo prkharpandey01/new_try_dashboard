@@ -1,0 +1,40 @@
+.multi-select {
+  position: relative;
+  min-width: 220px;
+}
+
+.multi-select-input {
+  background: #111827;
+  color: white;
+  padding: 10px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.multi-select-dropdown {
+  position: absolute;
+  top: 110%;
+  left: 0;
+  width: 100%;
+  background: #020617;
+  border: 1px solid #1f2933;
+  border-radius: 8px;
+  max-height: 240px;
+  overflow-y: auto;
+  z-index: 20;
+}
+
+.multi-select-option {
+  display: flex;
+  gap: 8px;
+  padding: 8px 10px;
+  cursor: pointer;
+  color: #e5e7eb;
+}
+
+.multi-select-option:hover {
+  background: #111827;
+}

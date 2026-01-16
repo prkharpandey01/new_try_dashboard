@@ -4,6 +4,7 @@ import Topbar from "../layout/Topbar";
 import KPICard from "../components/KPICard";
 import Charts from "../components/Charts";
 import DonutChart from "../components/DonutChart";
+import MultiSelect from "../components/MultiSelect";
 
 interface RecordItem {
   date: string;
@@ -16,24 +17,37 @@ type ViewMode = "YEAR" | "QUARTER" | "MONTH" | "DAY";
 const STORAGE_KEY = "PURE_MEDICAL_RECORDS";
 
 export default function Dashboard() {
-  /* ================= STATE INITIALIZATION (NO useEffect) ================= */
+  /* ================= LOAD DATA (SAFE FOR SSR) ================= */
   const [records] = useState<RecordItem[]>(() => {
+    if (typeof window === "undefined") return [];
     const raw = localStorage.getItem(STORAGE_KEY);
     return raw ? JSON.parse(raw) : [];
   });
 
-  const [source, setSource] = useState("ALL");
-  const [location, setLocation] = useState("ALL");
+  /* ================= MULTI-SELECT FILTER STATE ================= */
+  const [selectedSources, setSelectedSources] = useState<string[]>([]);
+  const [selectedLocations, setSelectedLocations] = useState<string[]>([]);
+
   const [viewMode, setViewMode] = useState<ViewMode>("MONTH");
 
   /* ================= FILTERED DATA ================= */
   const filteredRecords = useMemo(() => {
-    return records.filter(
-      (r) =>
-        (source === "ALL" || r.source === source) &&
-        (location === "ALL" || r.location === location)
-    );
-  }, [records, source, location]);
+    return records.filter((r) => {
+      if (
+        selectedSources.length > 0 &&
+        !selectedSources.includes(r.source)
+      )
+        return false;
+
+      if (
+        selectedLocations.length > 0 &&
+        !selectedLocations.includes(r.location)
+      )
+        return false;
+
+      return true;
+    });
+  }, [records, selectedSources, selectedLocations]);
 
   /* ================= KPI CALCULATIONS ================= */
   const totalAppointments = filteredRecords.length;
@@ -54,12 +68,12 @@ export default function Dashboard() {
     return Object.entries(map).sort((a, b) => b[1] - a[1])[0]?.[0] || "—";
   }, [filteredRecords]);
 
-  /* ================= AGGREGATION HELPERS ================= */
+  /* ================= AGGREGATION ================= */
   const yearData = useMemo(() => {
     const map: Record<string, number> = {};
     filteredRecords.forEach((r) => {
-      const year = new Date(r.date).getFullYear();
-      map[year] = (map[year] || 0) + 1;
+      const y = new Date(r.date).getFullYear();
+      map[y] = (map[y] || 0) + 1;
     });
     return Object.entries(map).map(([name, value]) => ({ name, value }));
   }, [filteredRecords]);
@@ -77,10 +91,16 @@ export default function Dashboard() {
   const monthData = useMemo(() => {
     const map: Record<string, number> = {};
     filteredRecords.forEach((r) => {
-      const m = new Date(r.date).toLocaleString("default", { month: "short" });
-      map[m] = (map[m] || 0) + 1;
+      const d = new Date(r.date);
+      const label = `${d.toLocaleString("default", {
+        month: "short",
+      })} ${d.getFullYear()}`;
+      map[label] = (map[label] || 0) + 1;
     });
-    return Object.entries(map).map(([month, value]) => ({ month, value }));
+    return Object.entries(map).map(([month, value]) => ({
+      month,
+      value,
+    }));
   }, [filteredRecords]);
 
   const dayData = useMemo(() => {
@@ -88,7 +108,10 @@ export default function Dashboard() {
     filteredRecords.forEach((r) => {
       map[r.date] = (map[r.date] || 0) + 1;
     });
-    return Object.entries(map).map(([date, value]) => ({ date, value }));
+    return Object.entries(map).map(([date, value]) => ({
+      date,
+      value,
+    }));
   }, [filteredRecords]);
 
   /* ================= DONUT DATA ================= */
@@ -108,9 +131,9 @@ export default function Dashboard() {
     return Object.entries(map).map(([name, value]) => ({ name, value }));
   }, [filteredRecords]);
 
-  /* ================= DROPDOWNS ================= */
-  const sources = ["ALL", ...new Set(records.map((r) => r.source))];
-  const locations = ["ALL", ...new Set(records.map((r) => r.location))];
+  /* ================= OPTIONS ================= */
+  const sourceOptions = [...new Set(records.map((r) => r.source))];
+  const locationOptions = [...new Set(records.map((r) => r.location))];
 
   return (
     <div className="app-layout">
@@ -119,7 +142,7 @@ export default function Dashboard() {
       <main className="main-content">
         <Topbar />
 
-        {/* KPI CARDS */}
+        {/* KPI */}
         <div className="kpi-grid">
           <KPICard title="Total Appointments" value={totalAppointments} />
           <KPICard title="Top Source" value={topSource} />
@@ -127,25 +150,24 @@ export default function Dashboard() {
           <KPICard title="Conversion Rate" value="—" />
         </div>
 
-        {/* SOURCE / LOCATION FILTERS */}
+        {/* MULTI-SELECT FILTERS */}
         <div className="filters-card">
-          <select value={source} onChange={(e) => setSource(e.target.value)}>
-            {sources.map((s) => (
-              <option key={s}>{s}</option>
-            ))}
-          </select>
+          <MultiSelect
+            label="Sources"
+            options={sourceOptions}
+            selected={selectedSources}
+            onChange={setSelectedSources}
+          />
 
-          <select
-            value={location}
-            onChange={(e) => setLocation(e.target.value)}
-          >
-            {locations.map((l) => (
-              <option key={l}>{l}</option>
-            ))}
-          </select>
+          <MultiSelect
+            label="Locations"
+            options={locationOptions}
+            selected={selectedLocations}
+            onChange={setSelectedLocations}
+          />
         </div>
 
-        {/* TIME RANGE SELECTOR */}
+        {/* TIME RANGE */}
         <div className="filters-card">
           <button onClick={() => setViewMode("YEAR")}>Yearly</button>
           <button onClick={() => setViewMode("QUARTER")}>Quarterly</button>
@@ -153,7 +175,7 @@ export default function Dashboard() {
           <button onClick={() => setViewMode("DAY")}>Daily</button>
         </div>
 
-        {/* MAIN DYNAMIC CHART */}
+        {/* CHART */}
         {viewMode === "YEAR" && <Charts type="BAR" data={yearData} />}
         {viewMode === "MONTH" && <Charts type="AREA" data={monthData} />}
         {viewMode === "DAY" && <Charts type="LINE" data={dayData} />}
@@ -163,8 +185,8 @@ export default function Dashboard() {
 
         {/* SECONDARY DONUTS */}
         <div className="secondary-grid">
-          <DonutChart title="Appointments by Source" data={sourceDonut} />
-          <DonutChart title="Appointments by Location" data={locationDonut} />
+          <DonutChart title="By Source" data={sourceDonut} />
+          <DonutChart title="By Location" data={locationDonut} />
         </div>
       </main>
     </div>
