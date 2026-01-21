@@ -1,14 +1,41 @@
+import { NavLink } from "react-router-dom";
 import "./Sidebar.css";
 
 export default function Sidebar() {
   return (
     <aside className="sidebar">
-      <h3>Pure Medical</h3>
-      <ul>
-        <li>Dashboard</li>
-        <li>Admin</li>
-        <li onClick={() => window.location.href = "/compare"}>Comparison</li>
-      </ul>
+      <div className="sidebar-header">
+        PURE MEDICAL
+      </div>
+
+      <nav className="sidebar-nav">
+        <NavLink
+          to="/dashboard"
+          className={({ isActive }) =>
+            isActive ? "sidebar-link active" : "sidebar-link"
+          }
+        >
+          Dashboard
+        </NavLink>
+
+        <NavLink
+          to="/compare"
+          className={({ isActive }) =>
+            isActive ? "sidebar-link active" : "sidebar-link"
+          }
+        >
+          Comparison
+        </NavLink>
+
+        <NavLink
+          to="/admin"
+          className={({ isActive }) =>
+            isActive ? "sidebar-link active" : "sidebar-link"
+          }
+        >
+          Admin
+        </NavLink>
+      </nav>
     </aside>
   );
 }

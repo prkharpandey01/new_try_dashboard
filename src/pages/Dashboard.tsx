@@ -16,7 +16,7 @@ type ViewMode = "YEAR" | "QUARTER" | "MONTH" | "WEEK";
 
 const STORAGE_KEY = "PURE_MEDICAL_RECORDS";
 
-/* ================= WEEK NUMBER (ISO-LIKE, BUSINESS FRIENDLY) ================= */
+/* ================= WEEK NUMBER ================= */
 const getWeekNumber = (date: Date) => {
   const firstDay = new Date(date.getFullYear(), 0, 1);
   const diff =
@@ -27,7 +27,7 @@ const getWeekNumber = (date: Date) => {
 };
 
 export default function Dashboard() {
-  /* ================= LOAD DATA (SSR SAFE) ================= */
+  /* ================= LOAD DATA ================= */
   const [records] = useState<RecordItem[]>(() => {
     if (typeof window === "undefined") return [];
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -47,16 +47,18 @@ export default function Dashboard() {
     return years.sort((a, b) => b - a);
   }, [records]);
 
-  const [selectedYear, setSelectedYear] = useState<number>(
-    availableYears[0] || new Date().getFullYear()
-  );
+  const [selectedYear, setSelectedYear] = useState<number | "ALL">("ALL");
 
   /* ================= FILTERED RECORDS ================= */
   const filteredRecords = useMemo(() => {
     return records.filter((r) => {
       const d = new Date(r.date);
 
-      if (viewMode !== "YEAR" && d.getFullYear() !== selectedYear)
+      if (
+        viewMode !== "YEAR" &&
+        selectedYear !== "ALL" &&
+        d.getFullYear() !== selectedYear
+      )
         return false;
 
       if (
@@ -100,21 +102,21 @@ export default function Dashboard() {
     return Object.entries(map).sort((a, b) => b[1] - a[1])[0]?.[0] || "—";
   }, [filteredRecords]);
 
-  /* ================= AGGREGATIONS (ORDERED CORRECTLY) ================= */
+  /* ================= AGGREGATIONS ================= */
 
-  // YEARLY (all years)
   const yearlyData = useMemo(() => {
     const map: Record<number, number> = {};
     records.forEach((r) => {
       const y = new Date(r.date).getFullYear();
+      if (selectedYear !== "ALL" && y !== selectedYear) return;
       map[y] = (map[y] || 0) + 1;
     });
+
     return Object.entries(map)
       .sort((a, b) => Number(a[0]) - Number(b[0]))
       .map(([name, value]) => ({ name, value }));
-  }, [records]);
+  }, [records, selectedYear]);
 
-  // QUARTERLY (Q1 → Q4)
   const quarterlyData = useMemo(() => {
     const map: Record<string, number> = {};
     filteredRecords.forEach((r) => {
@@ -127,7 +129,6 @@ export default function Dashboard() {
     }));
   }, [filteredRecords]);
 
-  // MONTHLY (Jan → Dec)
   const monthlyData = useMemo(() => {
     const map: Record<number, number> = {};
     filteredRecords.forEach((r) => {
@@ -141,7 +142,6 @@ export default function Dashboard() {
     }));
   }, [filteredRecords]);
 
-  // WEEKLY (W01 → W52, latest on right)
   const weeklyData = useMemo(() => {
     const map: Record<number, number> = {};
     filteredRecords.forEach((r) => {
@@ -158,7 +158,7 @@ export default function Dashboard() {
       }));
   }, [filteredRecords]);
 
-  /* ================= DONUT DATA (TYPE SAFE) ================= */
+  /* ================= DONUT DATA ================= */
   const sourceDonutData = useMemo(() => {
     const map: Record<string, number> = {};
     filteredRecords.forEach((r) => {
@@ -191,28 +191,6 @@ export default function Dashboard() {
           <KPICard title="Total Appointments" value={totalAppointments} />
           <KPICard title="Top Source" value={topSource} />
           <KPICard title="Top Location" value={topLocation} />
-          <KPICard title="Timezone" value="IST (GMT +5:30)" />
-        </div>
-
-        {/* CONTEXT */}
-        <div className="filters-card">
-          <strong>Context:</strong>
-          <span>
-            View: {viewMode} | Year:{" "}
-            {viewMode === "YEAR" ? "All" : selectedYear}
-          </span>
-          <span>
-            Sources:{" "}
-            {selectedSources.length > 0
-              ? selectedSources.join(", ")
-              : "All"}
-          </span>
-          <span>
-            Locations:{" "}
-            {selectedLocations.length > 0
-              ? selectedLocations.join(", ")
-              : "All"}
-          </span>
         </div>
 
         {/* FILTERS */}
@@ -230,11 +208,18 @@ export default function Dashboard() {
             onChange={setSelectedLocations}
           />
 
-          {viewMode !== "YEAR" && (
+          {(viewMode === "YEAR" || viewMode !== "YEAR") && (
             <select
               value={selectedYear}
-              onChange={(e) => setSelectedYear(Number(e.target.value))}
+              onChange={(e) =>
+                setSelectedYear(
+                  e.target.value === "ALL"
+                    ? "ALL"
+                    : Number(e.target.value)
+                )
+              }
             >
+              <option value="ALL">All Years</option>
               {availableYears.map((y) => (
                 <option key={y} value={y}>
                   {y}
@@ -257,7 +242,7 @@ export default function Dashboard() {
           <Charts
             type="BAR"
             data={yearlyData}
-            xLabel="Time"
+            xLabel="Year"
             yLabel="Appointments"
           />
         )}
@@ -266,7 +251,7 @@ export default function Dashboard() {
           <Charts
             type="BAR"
             data={quarterlyData}
-            xLabel="Time"
+            xLabel="Quarter"
             yLabel="Appointments"
           />
         )}
@@ -275,7 +260,7 @@ export default function Dashboard() {
           <Charts
             type="AREA"
             data={monthlyData}
-            xLabel="Time"
+            xLabel="Month"
             yLabel="Appointments"
           />
         )}
@@ -284,7 +269,7 @@ export default function Dashboard() {
           <Charts
             type="LINE"
             data={weeklyData}
-            xLabel="Time"
+            xLabel="Week"
             yLabel="Appointments"
           />
         )}
