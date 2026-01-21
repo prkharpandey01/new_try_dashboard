@@ -38,6 +38,7 @@ export default function Dashboard() {
   const [selectedSources, setSelectedSources] = useState<string[]>([]);
   const [selectedLocations, setSelectedLocations] = useState<string[]>([]);
   const [viewMode, setViewMode] = useState<ViewMode>("MONTH");
+  const [selectedYear, setSelectedYear] = useState<number | "ALL">("ALL");
 
   /* ================= AVAILABLE YEARS ================= */
   const availableYears = useMemo(() => {
@@ -46,8 +47,6 @@ export default function Dashboard() {
     );
     return years.sort((a, b) => b - a);
   }, [records]);
-
-  const [selectedYear, setSelectedYear] = useState<number | "ALL">("ALL");
 
   /* ================= FILTERED RECORDS ================= */
   const filteredRecords = useMemo(() => {
@@ -58,20 +57,23 @@ export default function Dashboard() {
         viewMode !== "YEAR" &&
         selectedYear !== "ALL" &&
         d.getFullYear() !== selectedYear
-      )
+      ) {
         return false;
+      }
 
       if (
         selectedSources.length > 0 &&
         !selectedSources.includes(r.source)
-      )
+      ) {
         return false;
+      }
 
       if (
         selectedLocations.length > 0 &&
         !selectedLocations.includes(r.location)
-      )
+      ) {
         return false;
+      }
 
       return true;
     });
@@ -208,25 +210,22 @@ export default function Dashboard() {
             onChange={setSelectedLocations}
           />
 
-          {(viewMode === "YEAR" || viewMode !== "YEAR") && (
-            <select
-              value={selectedYear}
-              onChange={(e) =>
-                setSelectedYear(
-                  e.target.value === "ALL"
-                    ? "ALL"
-                    : Number(e.target.value)
-                )
-              }
-            >
-              <option value="ALL">All Years</option>
-              {availableYears.map((y) => (
-                <option key={y} value={y}>
-                  {y}
-                </option>
-              ))}
-            </select>
-          )}
+          {/* Year selector always visible */}
+          <select
+            value={selectedYear}
+            onChange={(e) =>
+              setSelectedYear(
+                e.target.value === "ALL" ? "ALL" : Number(e.target.value)
+              )
+            }
+          >
+            <option value="ALL">All Years</option>
+            {availableYears.map((y) => (
+              <option key={y} value={y}>
+                {y}
+              </option>
+            ))}
+          </select>
         </div>
 
         {/* VIEW MODE */}
@@ -237,50 +236,27 @@ export default function Dashboard() {
           <button onClick={() => setViewMode("WEEK")}>Weekly</button>
         </div>
 
-        {/* CHART */}
+        {/* CHARTS */}
         {viewMode === "YEAR" && (
-          <Charts
-            type="BAR"
-            data={yearlyData}
-            xLabel="Year"
-            yLabel="Appointments"
-          />
+          <Charts type="BAR" data={yearlyData} xLabel="Year" yLabel="Appointments" />
         )}
 
         {viewMode === "QUARTER" && (
-          <Charts
-            type="BAR"
-            data={quarterlyData}
-            xLabel="Quarter"
-            yLabel="Appointments"
-          />
+          <Charts type="BAR" data={quarterlyData} xLabel="Quarter" yLabel="Appointments" />
         )}
 
         {viewMode === "MONTH" && (
-          <Charts
-            type="AREA"
-            data={monthlyData}
-            xLabel="Month"
-            yLabel="Appointments"
-          />
+          <Charts type="AREA" data={monthlyData} xLabel="Month" yLabel="Appointments" />
         )}
 
         {viewMode === "WEEK" && (
-          <Charts
-            type="LINE"
-            data={weeklyData}
-            xLabel="Week"
-            yLabel="Appointments"
-          />
+          <Charts type="LINE" data={weeklyData} xLabel="Week" yLabel="Appointments" />
         )}
 
         {/* DONUTS */}
         <div className="secondary-grid">
           <DonutChart title="Appointments by Source" data={sourceDonutData} />
-          <DonutChart
-            title="Appointments by Location"
-            data={locationDonutData}
-          />
+          <DonutChart title="Appointments by Location" data={locationDonutData} />
         </div>
       </main>
     </div>

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import * as XLSX from "xlsx";
 import Sidebar from "../layout/Sidebar";
 import Topbar from "../layout/Topbar";
@@ -10,20 +10,24 @@ interface RecordItem {
   service?: string;
 }
 
+type ExcelRow = Record<string, unknown>;
+
 const STORAGE_KEY = "PURE_MEDICAL_RECORDS";
 const PAGE_SIZE = 20;
 
 export default function Admin() {
-  const [records, setRecords] = useState<RecordItem[]>([]);
-  const [page, setPage] = useState(1);
-
-  /* ================= LOAD DATA ================= */
-  useEffect(() => {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    if (stored) {
-      setRecords(JSON.parse(stored));
+  /* ================= SAFE INITIAL LOAD ================= */
+  const [records, setRecords] = useState<RecordItem[]>(() => {
+    if (typeof window === "undefined") return [];
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      return raw ? (JSON.parse(raw) as RecordItem[]) : [];
+    } catch {
+      return [];
     }
-  }, []);
+  });
+
+  const [page, setPage] = useState<number>(1);
 
   /* ================= EXCEL UPLOAD ================= */
   const handleUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -32,42 +36,56 @@ export default function Admin() {
 
     const reader = new FileReader();
 
-    reader.onload = (event: any) => {
-      const data = new Uint8Array(event.target.result);
+    reader.onload = (event: ProgressEvent<FileReader>) => {
+      const result = event.target?.result;
+      if (!(result instanceof ArrayBuffer)) return;
+
+      const data = new Uint8Array(result);
       const workbook = XLSX.read(data, { type: "array" });
       const sheet = workbook.Sheets[workbook.SheetNames[0]];
-      const rows: any[] = XLSX.utils.sheet_to_json(sheet, { raw: true });
 
-      const parsed: RecordItem[] = rows.map((row, index) => {
+      const rows = XLSX.utils.sheet_to_json<ExcelRow>(sheet, {
+        raw: true,
+      });
+
+      const parsed: RecordItem[] = rows.map((row) => {
+        /* ---------- DATE ---------- */
         let date: string;
-        if (typeof row["Date"] === "number") {
-          const d = XLSX.SSF.parse_date_code(row["Date"]);
+        const rawDate = row["Date"];
+
+        if (typeof rawDate === "number") {
+          const d = XLSX.SSF.parse_date_code(rawDate);
           date = `${d.y}-${String(d.m).padStart(2, "0")}-${String(
             d.d
           ).padStart(2, "0")}`;
         } else {
-          date = new Date(row["Date"])
+          date = new Date(String(rawDate))
             .toISOString()
             .split("T")[0];
         }
 
         return {
           date,
-          location: row["Location"]?.toString().trim() || "Unknown",
-          source: row["Appt_Source"]?.toString().trim() || "Unknown",
-          service: row["Service"]
-            ? row["Service"].toString().trim()
-            : undefined,
+          location:
+            typeof row["Location"] === "string"
+              ? row["Location"].trim()
+              : "Unknown",
+          source:
+            typeof row["Appt_Source"] === "string"
+              ? row["Appt_Source"].trim()
+              : "Unknown",
+          service:
+            typeof row["Service"] === "string"
+              ? row["Service"].trim()
+              : undefined,
         };
       });
 
-      const existing = JSON.parse(
-        localStorage.getItem(STORAGE_KEY) || "[]"
-      );
+      const merged = [...records, ...parsed];
 
-      const merged = [...existing, ...parsed];
       localStorage.setItem(STORAGE_KEY, JSON.stringify(merged));
       setRecords(merged);
+      setPage(1);
 
       alert(`Uploaded ${parsed.length} records successfully`);
     };
@@ -77,7 +95,8 @@ export default function Admin() {
 
   /* ================= SORT + PAGINATION ================= */
   const sorted = [...records].sort(
-    (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
+    (a, b) =>
+      new Date(b.date).getTime() - new Date(a.date).getTime()
   );
 
   const totalPages = Math.ceil(sorted.length / PAGE_SIZE);
@@ -123,7 +142,7 @@ export default function Admin() {
                   <td>{r.date}</td>
                   <td>{r.location}</td>
                   <td>{r.source}</td>
-                  <td>{r.service || "-"}</td>
+                  <td>{r.service ?? "-"}</td>
                 </tr>
               ))}
             </tbody>
