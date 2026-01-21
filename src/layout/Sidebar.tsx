@@ -33,9 +33,17 @@ export default function Sidebar() {
             isActive ? "sidebar-link active" : "sidebar-link"
           }
         >
-          Admin
+           Admin
         </NavLink>
-      </nav>
+          <NavLink
+          to="/services"
+          className={({ isActive }) =>
+            isActive ? "sidebar-link active" : "sidebar-link"
+          }
+        >
+          Services
+        </NavLink>
+        </nav>
     </aside>
   );
 }
