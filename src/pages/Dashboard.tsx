@@ -31,16 +31,19 @@ export default function Dashboard() {
   const [records] = useState<RecordItem[]>(() => {
     if (typeof window === "undefined") return [];
     const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? JSON.parse(raw) : [];
+    return raw ? (JSON.parse(raw) as RecordItem[]) : [];
   });
 
   /* ================= FILTER STATE ================= */
   const [selectedSources, setSelectedSources] = useState<string[]>([]);
   const [selectedLocations, setSelectedLocations] = useState<string[]>([]);
-  const [viewMode, setViewMode] = useState<ViewMode>("MONTH");
   const [selectedYear, setSelectedYear] = useState<number | "ALL">("ALL");
+  const [viewMode, setViewMode] = useState<ViewMode>("MONTH");
 
-  /* ================= AVAILABLE YEARS ================= */
+  /* ================= OPTIONS ================= */
+  const sourceOptions = [...new Set(records.map((r) => r.source))];
+  const locationOptions = [...new Set(records.map((r) => r.location))];
+
   const availableYears = useMemo(() => {
     const years = Array.from(
       new Set(records.map((r) => new Date(r.date).getFullYear()))
@@ -48,19 +51,17 @@ export default function Dashboard() {
     return years.sort((a, b) => b - a);
   }, [records]);
 
-  /* ================= FILTERED RECORDS ================= */
+  /* ================= SINGLE SOURCE OF TRUTH ================= */
   const filteredRecords = useMemo(() => {
     return records.filter((r) => {
       const d = new Date(r.date);
 
-      if (
-        viewMode !== "YEAR" &&
-        selectedYear !== "ALL" &&
-        d.getFullYear() !== selectedYear
-      ) {
+      // Year filter (applies ONLY if specific year selected)
+      if (selectedYear !== "ALL" && d.getFullYear() !== selectedYear) {
         return false;
       }
 
+      // Source filter
       if (
         selectedSources.length > 0 &&
         !selectedSources.includes(r.source)
@@ -68,6 +69,7 @@ export default function Dashboard() {
         return false;
       }
 
+      // Location filter
       if (
         selectedLocations.length > 0 &&
         !selectedLocations.includes(r.location)
@@ -77,13 +79,7 @@ export default function Dashboard() {
 
       return true;
     });
-  }, [
-    records,
-    selectedSources,
-    selectedLocations,
-    selectedYear,
-    viewMode,
-  ]);
+  }, [records, selectedYear, selectedSources, selectedLocations]);
 
   /* ================= KPI ================= */
   const totalAppointments = filteredRecords.length;
@@ -105,19 +101,16 @@ export default function Dashboard() {
   }, [filteredRecords]);
 
   /* ================= AGGREGATIONS ================= */
-
   const yearlyData = useMemo(() => {
     const map: Record<number, number> = {};
-    records.forEach((r) => {
+    filteredRecords.forEach((r) => {
       const y = new Date(r.date).getFullYear();
-      if (selectedYear !== "ALL" && y !== selectedYear) return;
       map[y] = (map[y] || 0) + 1;
     });
-
     return Object.entries(map)
       .sort((a, b) => Number(a[0]) - Number(b[0]))
       .map(([name, value]) => ({ name, value }));
-  }, [records, selectedYear]);
+  }, [filteredRecords]);
 
   const quarterlyData = useMemo(() => {
     const map: Record<string, number> = {};
@@ -137,7 +130,6 @@ export default function Dashboard() {
       const m = new Date(r.date).getMonth();
       map[m] = (map[m] || 0) + 1;
     });
-
     return Array.from({ length: 12 }, (_, m) => ({
       name: new Date(0, m).toLocaleString("default", { month: "short" }),
       value: map[m] || 0,
@@ -150,7 +142,6 @@ export default function Dashboard() {
       const w = getWeekNumber(new Date(r.date));
       map[w] = (map[w] || 0) + 1;
     });
-
     return Object.keys(map)
       .map(Number)
       .sort((a, b) => a - b)
@@ -176,10 +167,6 @@ export default function Dashboard() {
     });
     return Object.entries(map).map(([name, value]) => ({ name, value }));
   }, [filteredRecords]);
-
-  /* ================= OPTIONS ================= */
-  const sourceOptions = [...new Set(records.map((r) => r.source))];
-  const locationOptions = [...new Set(records.map((r) => r.location))];
 
   return (
     <div className="app-layout">
@@ -210,7 +197,6 @@ export default function Dashboard() {
             onChange={setSelectedLocations}
           />
 
-          {/* Year selector always visible */}
           <select
             value={selectedYear}
             onChange={(e) =>
@@ -238,25 +224,25 @@ export default function Dashboard() {
 
         {/* CHARTS */}
         {viewMode === "YEAR" && (
-          <Charts type="BAR" data={yearlyData} xLabel="Year" yLabel="Appointments" />
+          <Charts type="BAR" data={yearlyData} />
         )}
-
         {viewMode === "QUARTER" && (
-          <Charts type="BAR" data={quarterlyData} xLabel="Quarter" yLabel="Appointments" />
+          <Charts type="BAR" data={quarterlyData} />
         )}
-
         {viewMode === "MONTH" && (
-          <Charts type="AREA" data={monthlyData} xLabel="Month" yLabel="Appointments" />
+          <Charts type="AREA" data={monthlyData} />
         )}
-
         {viewMode === "WEEK" && (
-          <Charts type="LINE" data={weeklyData} xLabel="Week" yLabel="Appointments" />
+          <Charts type="LINE" data={weeklyData} />
         )}
 
         {/* DONUTS */}
         <div className="secondary-grid">
           <DonutChart title="Appointments by Source" data={sourceDonutData} />
-          <DonutChart title="Appointments by Location" data={locationDonutData} />
+          <DonutChart
+            title="Appointments by Location"
+            data={locationDonutData}
+          />
         </div>
       </main>
     </div>
