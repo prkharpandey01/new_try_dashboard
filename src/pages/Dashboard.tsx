@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Sidebar from "../layout/Sidebar";
 import Topbar from "../layout/Topbar";
 import KPICard from "../components/KPICard";
@@ -8,15 +8,19 @@ import MultiSelect from "../components/MultiSelect";
 
 interface RecordItem {
   date: string;
-  source: string;
   location: string;
+  source: string;
 }
 
-type ViewMode = "YEAR" | "QUARTER" | "MONTH" | "WEEK";
+type ViewMode = "YEAR" | "MONTH" | "WEEK" | "DAY";
+type DataMode = "ARCHIVED" | "LIVE";
 
 const STORAGE_KEY = "PURE_MEDICAL_RECORDS";
 
-/* ================= WEEK NUMBER ================= */
+// ✅ FIXED URL (IMPORTANT)
+const GOOGLE_SHEET_URL =
+  "https://docs.google.com/spreadsheets/d/1-NaDFAQ-PWwDZi952bNrYWZ9A4bkPYInFAigQeictWM/gviz/tq?tqx=out:json";
+
 const getWeekNumber = (date: Date) => {
   const firstDay = new Date(date.getFullYear(), 0, 1);
   const diff =
@@ -26,102 +30,141 @@ const getWeekNumber = (date: Date) => {
   return Math.ceil(diff / 7);
 };
 
-export default function Dashboard() {
-  /* ================= LOAD DATA ================= */
-  const [records] = useState<RecordItem[]>(() => {
-    if (typeof window === "undefined") return [];
-    const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? (JSON.parse(raw) as RecordItem[]) : [];
-  });
+// ✅ IMPROVED DATE PARSER
+const parseSheetDate = (raw: unknown): string | null => {
+  if (!raw) return null;
 
-  /* ================= FILTER STATE ================= */
+  // Handle Google Sheets Date(YYYY,MM,DD)
+  if (typeof raw === "string" && raw.startsWith("Date(")) {
+    const parts = raw.match(/\d+/g);
+    if (!parts) return null;
+
+    const d = new Date(
+      Number(parts[0]),
+      Number(parts[1]),
+      Number(parts[2])
+    );
+
+    return d.toISOString();
+  }
+
+  const d =
+    raw instanceof Date
+      ? raw
+      : typeof raw === "string"
+      ? new Date(raw.replace(" ", "T"))
+      : null;
+
+  return d && !isNaN(d.getTime()) ? d.toISOString() : null;
+};
+
+export default function Dashboard() {
+  const [dataMode, setDataMode] = useState<DataMode>("ARCHIVED");
+  const [viewMode, setViewMode] = useState<ViewMode>("MONTH");
+
+  const [liveRecords, setLiveRecords] = useState<RecordItem[]>([]);
   const [selectedSources, setSelectedSources] = useState<string[]>([]);
   const [selectedLocations, setSelectedLocations] = useState<string[]>([]);
   const [selectedYear, setSelectedYear] = useState<number | "ALL">("ALL");
-  const [viewMode, setViewMode] = useState<ViewMode>("MONTH");
 
-  /* ================= OPTIONS ================= */
+  const archivedRecords = useMemo<RecordItem[]>(() => {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      return raw ? (JSON.parse(raw) as RecordItem[]) : [];
+    } catch {
+      return [];
+    }
+  }, []);
+
+  // ✅ FIXED FETCH LOGIC (ONLY CHANGE)
+  useEffect(() => {
+    if (dataMode !== "LIVE") return;
+
+    let cancelled = false;
+
+    fetch(GOOGLE_SHEET_URL)
+      .then((res) => res.text())
+      .then((text) => {
+        if (cancelled) return;
+
+        try {
+          const json = JSON.parse(text.substring(47).slice(0, -2));
+          const rows: { c: { v: unknown }[] }[] = json.table.rows;
+
+          const parsed = rows
+            .slice(1)
+            .map((r) => {
+              const date = parseSheetDate(r.c[0]?.v);
+              if (!date) return null;
+
+              return {
+                date,
+                location:
+                  typeof r.c[1]?.v === "string"
+                    ? r.c[1].v.trim()
+                    : "Unknown",
+                source:
+                  typeof r.c[2]?.v === "string"
+                    ? r.c[2].v.trim()
+                    : "Unknown",
+              };
+            })
+            .filter((r): r is RecordItem => r !== null);
+
+          setLiveRecords(parsed);
+        } catch (err) {
+          console.error("Sheet parsing error:", err);
+          setLiveRecords([]);
+        }
+      })
+      .catch((err) => {
+        console.error("Fetch error:", err);
+        setLiveRecords([]);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [dataMode]);
+
+  const records = useMemo<RecordItem[]>(
+    () => (dataMode === "LIVE" ? liveRecords : archivedRecords),
+    [dataMode, liveRecords, archivedRecords]
+  );
+
+  const loading = dataMode === "LIVE" && liveRecords.length === 0;
+
   const sourceOptions = [...new Set(records.map((r) => r.source))];
   const locationOptions = [...new Set(records.map((r) => r.location))];
+  const availableYears = [
+    ...new Set(records.map((r) => new Date(r.date).getFullYear())),
+  ].sort((a, b) => b - a);
 
-  const availableYears = useMemo(() => {
-    const years = Array.from(
-      new Set(records.map((r) => new Date(r.date).getFullYear()))
-    );
-    return years.sort((a, b) => b - a);
-  }, [records]);
+  const filteredRecords = useMemo(
+    () =>
+      records.filter((r) => {
+        const d = new Date(r.date);
+        if (selectedYear !== "ALL" && d.getFullYear() !== selectedYear)
+          return false;
+        if (selectedSources.length && !selectedSources.includes(r.source))
+          return false;
+        if (
+          selectedLocations.length &&
+          !selectedLocations.includes(r.location)
+        )
+          return false;
+        return true;
+      }),
+    [records, selectedYear, selectedSources, selectedLocations]
+  );
 
-  /* ================= SINGLE SOURCE OF TRUTH ================= */
-  const filteredRecords = useMemo(() => {
-    return records.filter((r) => {
-      const d = new Date(r.date);
-
-      // Year filter (applies ONLY if specific year selected)
-      if (selectedYear !== "ALL" && d.getFullYear() !== selectedYear) {
-        return false;
-      }
-
-      // Source filter
-      if (
-        selectedSources.length > 0 &&
-        !selectedSources.includes(r.source)
-      ) {
-        return false;
-      }
-
-      // Location filter
-      if (
-        selectedLocations.length > 0 &&
-        !selectedLocations.includes(r.location)
-      ) {
-        return false;
-      }
-
-      return true;
-    });
-  }, [records, selectedYear, selectedSources, selectedLocations]);
-
-  /* ================= KPI ================= */
-  const totalAppointments = filteredRecords.length;
-
-  const topSource = useMemo(() => {
-    const map: Record<string, number> = {};
-    filteredRecords.forEach((r) => {
-      map[r.source] = (map[r.source] || 0) + 1;
-    });
-    return Object.entries(map).sort((a, b) => b[1] - a[1])[0]?.[0] || "—";
-  }, [filteredRecords]);
-
-  const topLocation = useMemo(() => {
-    const map: Record<string, number> = {};
-    filteredRecords.forEach((r) => {
-      map[r.location] = (map[r.location] || 0) + 1;
-    });
-    return Object.entries(map).sort((a, b) => b[1] - a[1])[0]?.[0] || "—";
-  }, [filteredRecords]);
-
-  /* ================= AGGREGATIONS ================= */
   const yearlyData = useMemo(() => {
     const map: Record<number, number> = {};
     filteredRecords.forEach((r) => {
       const y = new Date(r.date).getFullYear();
       map[y] = (map[y] || 0) + 1;
     });
-    return Object.entries(map)
-      .sort((a, b) => Number(a[0]) - Number(b[0]))
-      .map(([name, value]) => ({ name, value }));
-  }, [filteredRecords]);
-
-  const quarterlyData = useMemo(() => {
-    const map: Record<string, number> = {};
-    filteredRecords.forEach((r) => {
-      const q = `Q${Math.floor(new Date(r.date).getMonth() / 3) + 1}`;
-      map[q] = (map[q] || 0) + 1;
-    });
-    return ["Q1", "Q2", "Q3", "Q4"].map((q) => ({
-      name: q,
-      value: map[q] || 0,
-    }));
+    return Object.entries(map).map(([name, value]) => ({ name, value }));
   }, [filteredRecords]);
 
   const monthlyData = useMemo(() => {
@@ -145,13 +188,20 @@ export default function Dashboard() {
     return Object.keys(map)
       .map(Number)
       .sort((a, b) => a - b)
-      .map((w) => ({
-        name: `W${w.toString().padStart(2, "0")}`,
-        value: map[w],
-      }));
+      .map((w) => ({ name: `W${w}`, value: map[w] }));
   }, [filteredRecords]);
 
-  /* ================= DONUT DATA ================= */
+  const dailyData = useMemo(() => {
+    const map: Record<string, number> = {};
+    filteredRecords.forEach((r) => {
+      const d = new Date(r.date);
+      if (isNaN(d.getTime())) return;
+      const key = d.toISOString().split("T")[0];
+      map[key] = (map[key] || 0) + 1;
+    });
+    return Object.entries(map).map(([name, value]) => ({ name, value }));
+  }, [filteredRecords]);
+
   const sourceDonutData = useMemo(() => {
     const map: Record<string, number> = {};
     filteredRecords.forEach((r) => {
@@ -160,29 +210,39 @@ export default function Dashboard() {
     return Object.entries(map).map(([name, value]) => ({ name, value }));
   }, [filteredRecords]);
 
-  const locationDonutData = useMemo(() => {
-    const map: Record<string, number> = {};
-    filteredRecords.forEach((r) => {
-      map[r.location] = (map[r.location] || 0) + 1;
-    });
-    return Object.entries(map).map(([name, value]) => ({ name, value }));
-  }, [filteredRecords]);
-
   return (
     <div className="app-layout">
       <Sidebar />
-
       <main className="main-content">
         <Topbar />
 
-        {/* KPI */}
-        <div className="kpi-grid">
-          <KPICard title="Total Appointments" value={totalAppointments} />
-          <KPICard title="Top Source" value={topSource} />
-          <KPICard title="Top Location" value={topLocation} />
+        <div className="filters-card">
+          <button
+            className={dataMode === "ARCHIVED" ? "active" : ""}
+            onClick={() => {
+              setDataMode("ARCHIVED");
+              setViewMode("MONTH");
+            }}
+          >
+            Archived
+          </button>
+          <button
+            className={dataMode === "LIVE" ? "active" : ""}
+            onClick={() => setDataMode("LIVE")}
+          >
+            Live Data
+          </button>
         </div>
 
-        {/* FILTERS */}
+        {loading && <p>Loading live data…</p>}
+
+        <div className="kpi-grid">
+          <KPICard
+            title="Total Appointments"
+            value={filteredRecords.length}
+          />
+        </div>
+
         <div className="filters-card">
           <MultiSelect
             label="Sources"
@@ -196,7 +256,6 @@ export default function Dashboard() {
             selected={selectedLocations}
             onChange={setSelectedLocations}
           />
-
           <select
             value={selectedYear}
             onChange={(e) =>
@@ -214,36 +273,26 @@ export default function Dashboard() {
           </select>
         </div>
 
-        {/* VIEW MODE */}
         <div className="filters-card">
-          <button onClick={() => setViewMode("YEAR")}>Yearly</button>
-          <button onClick={() => setViewMode("QUARTER")}>Quarterly</button>
-          <button onClick={() => setViewMode("MONTH")}>Monthly</button>
-          <button onClick={() => setViewMode("WEEK")}>Weekly</button>
+          <button onClick={() => setViewMode("YEAR")}>Year</button>
+          <button onClick={() => setViewMode("MONTH")}>Month</button>
+          <button onClick={() => setViewMode("WEEK")}>Week</button>
+          <button
+            disabled={dataMode === "ARCHIVED"}
+            onClick={() => setViewMode("DAY")}
+          >
+            Day
+          </button>
         </div>
 
-        {/* CHARTS */}
-        {viewMode === "YEAR" && (
-          <Charts type="BAR" data={yearlyData} />
-        )}
-        {viewMode === "QUARTER" && (
-          <Charts type="BAR" data={quarterlyData} />
-        )}
-        {viewMode === "MONTH" && (
-          <Charts type="AREA" data={monthlyData} />
-        )}
-        {viewMode === "WEEK" && (
-          <Charts type="LINE" data={weeklyData} />
+        {viewMode === "YEAR" && <Charts type="BAR" data={yearlyData} />}
+        {viewMode === "MONTH" && <Charts type="AREA" data={monthlyData} />}
+        {viewMode === "WEEK" && <Charts type="LINE" data={weeklyData} />}
+        {viewMode === "DAY" && dataMode === "LIVE" && (
+          <Charts type="LINE" data={dailyData} />
         )}
 
-        {/* DONUTS */}
-        <div className="secondary-grid">
-          <DonutChart title="Appointments by Source" data={sourceDonutData} />
-          <DonutChart
-            title="Appointments by Location"
-            data={locationDonutData}
-          />
-        </div>
+        <DonutChart title="Appointments by Source" data={sourceDonutData} />
       </main>
     </div>
   );
