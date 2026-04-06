@@ -17,7 +17,6 @@ type DataMode = "ARCHIVED" | "LIVE";
 
 const STORAGE_KEY = "PURE_MEDICAL_RECORDS";
 
-// ✅ FIXED URL (IMPORTANT)
 const GOOGLE_SHEET_URL =
   "https://docs.google.com/spreadsheets/d/1-NaDFAQ-PWwDZi952bNrYWZ9A4bkPYInFAigQeictWM/gviz/tq?tqx=out:json";
 
@@ -30,32 +29,47 @@ const getWeekNumber = (date: Date) => {
   return Math.ceil(diff / 7);
 };
 
-// ✅ IMPROVED DATE PARSER
+// ✅ Robust parser
 const parseSheetDate = (raw: unknown): string | null => {
   if (!raw) return null;
 
-  // Handle Google Sheets Date(YYYY,MM,DD)
-  if (typeof raw === "string" && raw.startsWith("Date(")) {
-    const parts = raw.match(/\d+/g);
-    if (!parts) return null;
+  try {
+    if (typeof raw === "string") {
+      if (raw.startsWith("Date(")) {
+        const parts = raw.match(/\d+/g);
+        if (!parts) return null;
+        const d = new Date(
+          Number(parts[0]),
+          Number(parts[1]),
+          Number(parts[2])
+        );
+        return d.toISOString();
+      }
 
-    const d = new Date(
-      Number(parts[0]),
-      Number(parts[1]),
-      Number(parts[2])
-    );
+      const normalized = raw.replace(" ", "T");
+      const d = new Date(normalized);
+      if (!isNaN(d.getTime())) return d.toISOString();
 
-    return d.toISOString();
+      const parts = raw.split(/[- :]/);
+      if (parts.length >= 6) {
+        const d2 = new Date(
+          Number(parts[0]),
+          Number(parts[1]) - 1,
+          Number(parts[2]),
+          Number(parts[3]),
+          Number(parts[4]),
+          Number(parts[5])
+        );
+        return !isNaN(d2.getTime()) ? d2.toISOString() : null;
+      }
+    }
+
+    if (raw instanceof Date) return raw.toISOString();
+
+    return null;
+  } catch {
+    return null;
   }
-
-  const d =
-    raw instanceof Date
-      ? raw
-      : typeof raw === "string"
-      ? new Date(raw.replace(" ", "T"))
-      : null;
-
-  return d && !isNaN(d.getTime()) ? d.toISOString() : null;
 };
 
 export default function Dashboard() {
@@ -76,7 +90,7 @@ export default function Dashboard() {
     }
   }, []);
 
-  // ✅ FIXED FETCH LOGIC (ONLY CHANGE)
+  // ✅ FIXED FETCH (FULLY DEFENSIVE)
   useEffect(() => {
     if (dataMode !== "LIVE") return;
 
@@ -88,32 +102,38 @@ export default function Dashboard() {
         if (cancelled) return;
 
         try {
-          const json = JSON.parse(text.substring(47).slice(0, -2));
-          const rows: { c: { v: unknown }[] }[] = json.table.rows;
+          const json = JSON.parse(text.substring(47).slice(0, -2)) as any;
 
-          const parsed = rows
+          const rows = json?.table?.rows || [];
+
+          console.log("Rows from API:", rows.length); // ✅ DEBUG
+
+          const parsed: RecordItem[] = rows
             .slice(1)
-            .map((r) => {
-              const date = parseSheetDate(r.c[0]?.v);
-              if (!date) return null;
+            .filter((r: any) => r && r.c) // ✅ remove broken/null rows
+            .map((r: any) => {
+              const cells = r.c;
+
+              const date = parseSheetDate(cells?.[0]?.v);
 
               return {
-                date,
+                date: date || new Date().toISOString(),
                 location:
-                  typeof r.c[1]?.v === "string"
-                    ? r.c[1].v.trim()
+                  typeof cells?.[1]?.v === "string"
+                    ? cells[1].v.trim()
                     : "Unknown",
                 source:
-                  typeof r.c[2]?.v === "string"
-                    ? r.c[2].v.trim()
+                  typeof cells?.[2]?.v === "string"
+                    ? cells[2].v.trim()
                     : "Unknown",
               };
-            })
-            .filter((r): r is RecordItem => r !== null);
+            });
+
+          console.log("Parsed records:", parsed.length); // ✅ DEBUG
 
           setLiveRecords(parsed);
         } catch (err) {
-          console.error("Sheet parsing error:", err);
+          console.error("Parsing error:", err);
           setLiveRecords([]);
         }
       })
@@ -127,7 +147,7 @@ export default function Dashboard() {
     };
   }, [dataMode]);
 
-  const records = useMemo<RecordItem[]>(
+  const records = useMemo(
     () => (dataMode === "LIVE" ? liveRecords : archivedRecords),
     [dataMode, liveRecords, archivedRecords]
   );
@@ -191,14 +211,24 @@ export default function Dashboard() {
       .map((w) => ({ name: `W${w}`, value: map[w] }));
   }, [filteredRecords]);
 
+  // ✅ FIXED DAILY (LOCAL DATE)
   const dailyData = useMemo(() => {
     const map: Record<string, number> = {};
+
     filteredRecords.forEach((r) => {
       const d = new Date(r.date);
       if (isNaN(d.getTime())) return;
-      const key = d.toISOString().split("T")[0];
+
+      const key =
+        d.getFullYear() +
+        "-" +
+        String(d.getMonth() + 1).padStart(2, "0") +
+        "-" +
+        String(d.getDate()).padStart(2, "0");
+
       map[key] = (map[key] || 0) + 1;
     });
+
     return Object.entries(map).map(([name, value]) => ({ name, value }));
   }, [filteredRecords]);
 
